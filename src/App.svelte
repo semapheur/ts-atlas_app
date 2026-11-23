@@ -264,6 +264,7 @@
     flex-direction: column;
     gap: var(--text-lg);
     overflow-y: auto;
+    scrollbar-gutter: stable;
     background: var(--color-panel);
     border-right: 1px solid var(--color-edge);
     padding: var(--size-lg);
