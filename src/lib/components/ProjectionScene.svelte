@@ -15,6 +15,8 @@
     clipAngle?: number;
     perspective?: ProjectionPerspective;
     transverse?: boolean;
+    /** Cell outlines (lon/lat rings, rotated frame) of projections with cuts. */
+    cells?: number[][][];
   }
 
   let {
@@ -25,6 +27,7 @@
     clipAngle,
     perspective,
     transverse = false,
+    cells = [],
   }: Props = $props();
 
   const DEG = Math.PI / 180;
@@ -34,6 +37,7 @@
   const V2 = THREE.Vector2;
   const DEFAULT_CLIP = { orthographic: 90, stereographic: 142, gnomonic: 60 };
   const MAX_PLANE_R = 3; // drawing cap: stereographic/gnomonic radii blow up
+  const PSEUDO_STRETCH = 2; // pseudoazimuthal maps are drawn as a 2:1 ellipse
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer | undefined;
@@ -277,14 +281,25 @@
     );
   }
 
-  // tangent plane, with projectors for perspective projections
-  const PLANE_RADIUS = {
-    orthographic: 1.15,
-    stereographic: 2.1,
-    gnomonic: 1.9,
-  };
+  /** The central meridian (lon 0) of the fixed surface frame. */
+  const centralMeridian = () =>
+    polyline(
+      arc((t) => lonLat(0, -90 + 180 * t), 48),
+      CONTACT,
+      1,
+    );
 
-  function buildPlane(perspepctive?: ProjectionPerspective, clip?: number) {
+  // tangent plane, with projectors for perspective projections
+  /**
+   * `stretch` > 1 widens the plane into an ellipse: the pseudoazimuthal
+   * projections (Aitoff, Hammer, Winkel Tripel, ...) are an azimuthal
+   * projection stretched sideways. Schematic: the exact ratio varies.
+   */
+  function buildPlane(
+    perspective?: ProjectionPerspective,
+    clip?: number,
+    stretch = 1,
+  ) {
     const clipDeg = perspective ? (clip ?? DEFAULT_CLIP[perspective]) : 0;
     // Angle actually drawn: the clip angle, unless that would be off-screen.
     const thetaMax = perspective
@@ -313,13 +328,29 @@
       const t = (i / 12) * 2 * Math.PI;
       grid.push(new V3(0, 0, 1), new V3(R * Math.cos(t), R * Math.sin(t), 1));
     }
-    surfaceGroup.add(
-      disc,
-      segments(grid, 0x1d4ed8, 0.4),
-      dot(new V3(0, 0, 1), 0.04, CONTACT),
-    );
 
-    if (!perspective) return 5.4; // azimuthal equal-area / equidistant: not a perspective
+    // Everything that stretches lives in one group, so the contact dot stays round.
+    const plane = new THREE.Group();
+    plane.scale.x = stretch;
+    plane.add(disc, segments(grid, 0x1d4ed8, 0.4));
+    if (stretch !== 1) {
+      // Scale is true along the equator and the central meridian.
+      plane.add(
+        segments(
+          [
+            new V3(-R, 0, 1),
+            new V3(R, 0, 1),
+            new V3(0, -R, 1),
+            new V3(0, R, 1),
+          ],
+          CONTACT,
+          1,
+        ),
+      );
+    }
+    surfaceGroup.add(plane, dot(new V3(0, 0, 1), 0.04, CONTACT));
+
+    if (!perspective) return stretch !== 1 ? 6.8 : 5.4; // not a perspective projection
 
     // Clip boundary on the sphere: a small circle at angle `clip` from the tangent point. It lives in the surface frame, like the plane.
     const c = clipDeg * DEG;
@@ -369,6 +400,73 @@
     return Math.max(5, 3.8 + 1.5 * R); // camera distance grows with the plane
   }
 
+  /**
+   * Pseudocylindrical: parallels stay straight and parallel, but meridians
+   * bend toward the poles, so no cylinder is truly developable. Schematic: an
+   * equatorial cylinder with meridians bent like the sinusoidal projection
+   * (θ = λ·cos φ), true along the equator and the central meridian.
+   */
+  function buildPseudocylinder() {
+    const half = 1.15;
+    surfaceGroup.add(...revolve(new V2(1, -half), new V2(1, half)));
+
+    const ring = (y: number, color: number, opacity: number) =>
+      polyline(
+        arc(
+          (t) =>
+            new V3(Math.cos(t * 2 * Math.PI), y, Math.sin(t * 2 * Math.PI)),
+          96,
+        ),
+        color,
+        opacity,
+        true,
+      );
+    for (const lat of [-60, -30, 30, 60]) {
+      surfaceGroup.add(ring(Math.sin(lat * DEG), RAY, 0.45));
+    }
+
+    for (let lon = -180; lon <= 180; lon += 30) {
+      if (lon === 0) continue;
+      surfaceGroup.add(
+        polyline(
+          arc((t) => {
+            const phi = (-90 + 180 * t) * DEG;
+            const theta = lon * DEG * Math.cos(phi); // from +z, toward +x
+            return new V3(Math.sin(theta), Math.sin(phi), Math.cos(theta));
+          }, 48),
+          RAY,
+          0.85,
+        ),
+      );
+    }
+
+    surfaceGroup.add(ring(0, CONTACT, 1));
+    surfaceGroup.add(
+      polyline([new V3(0, -half, 1), new V3(0, half, 1)], CONTACT, 1),
+    );
+    return 5.6;
+  }
+
+  /** Reference lines for families that have no single developable surface. */
+  function buildReferenceLines() {
+    surfaceGroup.add(parallelCircle(0), centralMeridian());
+    return 4.6;
+  }
+
+  /** Outlines of the regions a projection with cuts maps separately. */
+  function addCells(rings: number[][][]) {
+    for (const ring of rings) {
+      surfaceGroup.add(
+        polyline(
+          ring.map(([lon, lat]) => lonLat(lon, lat).multiplyScalar(1.004)),
+          RAY,
+          1,
+          true,
+        ),
+      );
+    }
+  }
+
   // build / update
   function frame(distance: number) {
     camera.position.set(0.55, 0.4, 0.73).normalize().multiplyScalar(distance);
@@ -381,9 +479,11 @@
     lat2: number,
     perspective?: ProjectionPerspective,
     clip?: number,
+    cells: number[][][] = [],
   ) {
     clearGroup(surfaceGroup);
-    const axisEnd = family === "planar" ? new V3(0, 0, 1.7) : new V3(0, 1.7, 0);
+    const zAxis = family === "planar" || family === "pseudoazimuthal";
+    const axisEnd = zAxis ? new V3(0, 0, 1.7) : new V3(0, 1.7, 0);
     surfaceGroup.add(
       segments([axisEnd.clone().negate(), axisEnd], CONTACT, 0.5),
     );
@@ -393,20 +493,18 @@
       surfaceGroup.add(...revolve(d.a, d.b));
       for (const lat of d.contacts) surfaceGroup.add(parallelCircle(lat));
       frame(5.6);
-    } else if (family === "pseudocylindrical") {
-      // No developable surface: show only where the map is "true".
-      surfaceGroup.add(parallelCircle(0));
-      surfaceGroup.add(
-        polyline(
-          arc((t) => lonLat(0, -90 + 180 * t), 48),
-          CONTACT,
-          1,
-        ),
-      );
-      frame(4.6);
-    } else {
+    } else if (family === "planar") {
       frame(buildPlane(perspective, clip));
+    } else if (family === "pseudoazimuthal") {
+      frame(buildPlane(undefined, undefined, PSEUDO_STRETCH));
+    } else if (family === "pseudocylindrical") {
+      frame(buildPseudocylinder());
+    } else {
+      // "interrupted" and "other": the cells below say what is special
+      frame(buildReferenceLines());
     }
+
+    addCells(cells);
     render();
   }
 
@@ -419,6 +517,7 @@
       standardParallels[1] ?? 0,
       perspective,
       clipAngle,
+      cells,
     );
   });
 
@@ -442,11 +541,12 @@
   const aspect = $derived.by(() => {
     // Angle between the globe's polar axis and the surface's axis
     // (cone/cylinder: its axis; plane: its normal / tangent point).
-    const local = family === "planar" ? new V3(0, 0, 1) : new V3(0, 1, 0);
+    const zAxis = family === "planar" || family === "pseudoazimuthal";
+    const local = zAxis ? new V3(0, 0, 1) : new V3(0, 1, 0);
     const axis = local.applyQuaternion(surfaceQuaternion(rotation, transverse));
     const a = Math.acos(Math.min(1, Math.abs(axis.y))) / DEG;
 
-    if (family === "planar") {
+    if (zAxis) {
       return a < 1 ? "polar" : a > 89 ? "equatorial" : "oblique";
     }
     return a < 1 ? "normal" : a > 89 ? "transverse" : "oblique";
@@ -457,11 +557,24 @@
     const kind =
       Math.abs(p1 - p2) >= 0.5 || Math.abs(p1) >= 1 ? "secant" : "tangent";
 
-    if (family === "pseudocylindrical") return `${aspect} pseudocylindrical`;
-    if (family === "planar")
-      return `${aspect} ${perspective ? `plane · ${perspective}` : "tangent plane"}`;
-    if (family === "cylindrical") return `${aspect} ${kind} cylinder`;
-    return `${aspect} ${kind} cone`;
+    switch (family) {
+      case "planar":
+        return `${aspect} ${perspective ? `plane · ${perspective}` : "tangent plane"}`;
+      case "cylindrical":
+        return `${aspect} ${kind} cylinder`;
+      case "conic":
+        return `${aspect} ${kind} cone`;
+      case "pseudoazimuthal":
+        return `${aspect} pseudoazimuthal`;
+      case "pseudocylindrical":
+        return `${aspect} pseudocylindrical`;
+      case "interrupted":
+        return `interrupted · ${cells.length} lobes`;
+      default:
+        return cells.length
+          ? `${cells.length} cells`
+          : "equator · central meridian";
+    }
   });
 
   onMount(() => {

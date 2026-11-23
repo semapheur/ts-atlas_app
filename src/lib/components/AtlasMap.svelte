@@ -12,7 +12,11 @@
   import { tessellateGeoLayers } from "../tessellate";
   import { createRenderer } from "../renderer";
   import type { GeoData, MapRenderer, MeasureMode } from "../types";
-  import { fitProjection, type ProjectionMeta } from "../projections";
+  import {
+    fitProjection,
+    initialRotation,
+    type ProjectionMeta,
+  } from "../projections";
   import { buildSvg } from "../export_svg";
   import type { MapColors } from "../map_color";
 
@@ -238,6 +242,7 @@
       graticule,
       geographicLines: data.geographicLines,
       projection: view.projection,
+      interruption: meta.interruption,
       showTissot,
     });
     renderer.updateGeometry(buffers);
@@ -608,7 +613,7 @@
   function resetView() {
     zoom = 1;
     pan = [0, 0];
-    rotation = [0, 0, 0];
+    rotation = initialRotation(meta);
     clearMeasurements();
   }
 
@@ -643,6 +648,7 @@
       data,
       graticule,
       projection: view.projection,
+      interruption: meta.interruption,
       width,
       height,
       zoom,

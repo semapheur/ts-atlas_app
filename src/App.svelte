@@ -9,6 +9,7 @@
     PROJECTIONS,
     PROJECTION_LIST,
     defaultParams,
+    initialRotation,
     type ProjectionId,
     type ParamValues,
     type ProjectionFamily,
@@ -72,9 +73,11 @@
     planar: "Azimuthal (planar)",
     cylindrical: "Cylindrical",
     pseudocylindrical: "Pseudocylindrical",
+    pseudoazimuthal: "Pseudoazimuthal",
     conic: "Conic",
+    interrupted: "Interrupted",
+    other: "Other",
   };
-
   const selectGroups = (Object.keys(FAMILY_LABELS) as ProjectionFamily[])
     .map((family) => ({
       label: FAMILY_LABELS[family],
@@ -84,6 +87,10 @@
       })),
     }))
     .filter((g) => g.options.length > 0);
+
+  $effect(() => {
+    rotation = initialRotation(activeMeta);
+  });
 
   function setParam(id: string, value: number) {
     paramStore[selectedKey] = { ...params, [id]: value };
@@ -168,22 +175,6 @@
     </section>
 
     <section class="control-section">
-      <h2>Colors</h2>
-      {#each COLOR_FIELDS as f (f.key)}
-        <label class="color-row">
-          <span>{f.label}</span>
-          <input type="color" bind:value={mapColors[f.key]} />
-        </label>
-      {/each}
-      <Button
-        class="control-button"
-        onclick={() => (mapColors = { ...DEFAULT_MAP_COLORS })}
-      >
-        Reset colors
-      </Button>
-    </section>
-
-    <section class="control-section">
       <h2>Export</h2>
       <div class="button-group">
         <Button
@@ -202,6 +193,24 @@
         </Button>
       </div>
       <Select label="PNG scale" bind:value={pngScale} options={[1, 2, 3, 4]} />
+    </section>
+
+    <section class="control-section">
+      <details>
+        <summary>Colors</summary>
+        {#each COLOR_FIELDS as f (f.key)}
+          <label class="color-row">
+            <span>{f.label}</span>
+            <input type="color" bind:value={mapColors[f.key]} />
+          </label>
+        {/each}
+        <Button
+          class="control-button"
+          onclick={() => (mapColors = { ...DEFAULT_MAP_COLORS })}
+        >
+          Reset colors
+        </Button>
+      </details>
     </section>
 
     <div class="hint">

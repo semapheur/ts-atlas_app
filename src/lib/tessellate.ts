@@ -4,6 +4,11 @@ import {
   type GeoProjection,
   type GeoStream,
 } from "d3-geo";
+import {
+  prepareGeometry,
+  streamGeometry,
+  type InterruptionKind,
+} from "./interruption";
 import earcut from "earcut";
 import type { MultiLayerMeshBuffers } from "./types";
 
@@ -12,6 +17,8 @@ interface TessellationInput {
   graticule: GeoJSON.MultiLineString | GeoJSON.FeatureCollection;
   geographicLines?: GeoJSON.FeatureCollection;
   projection: GeoProjection;
+  /** ProjectionMeta.interruption: projections with cuts d3 doesn't clip. */
+  interruption?: InterruptionKind;
   showTissot?: boolean;
 }
 
@@ -20,6 +27,7 @@ export function tessellateGeoLayers({
   graticule,
   geographicLines,
   projection,
+  interruption,
   showTissot = true,
 }: TessellationInput): MultiLayerMeshBuffers {
   // Buffers
@@ -58,6 +66,10 @@ export function tessellateGeoLayers({
     };
   }
 
+  const countryData = prepareGeometry(interruption, countries);
+  const lineData =
+    geographicLines && prepareGeometry(interruption, geographicLines);
+
   // 1. Countries (Fills + Borders)
   let countryRings: number[][] = [];
   let currentCountryRing: number[] = [];
@@ -73,11 +85,7 @@ export function tessellateGeoLayers({
     },
     lineEnd() {
       if (currentCountryRing.length < 4) return;
-      if (inPolygon) {
-        countryRings.push(currentCountryRing);
-        // Emit border segment pairs
-        emitLineSegments(currentCountryRing, true, borderVertices);
-      }
+      if (inPolygon) countryRings.push(currentCountryRing);
     },
     polygonStart() {
       inPolygon = true;
@@ -93,19 +101,23 @@ export function tessellateGeoLayers({
     sphere() {},
   };
 
-  const projectedCountryStream = projection.stream(countrySink);
-  for (const feature of countries.features) {
-    if (feature.geometry) geoStream(feature.geometry, projectedCountryStream);
-  }
+  // Borders are streamed as lines (not as polygon rings), so clipping at a cut
+  // never adds a border segment along the cut itself.
+  streamGeometry(projection, interruption, countryData, [
+    { sink: countrySink },
+    { sink: createLineSink(borderVertices), asLines: true },
+  ]);
 
   // 2. Graticule Lines
-  const graticuleStream = projection.stream(createLineSink(graticuleVertices));
-  geoStream(graticule, graticuleStream);
+  streamGeometry(projection, interruption, graticule, [
+    { sink: createLineSink(graticuleVertices) },
+  ]);
 
   // 3. Geographic Lines (Equator, Tropics)
-  if (geographicLines) {
-    const geoLineStream = projection.stream(createLineSink(geoLineVertices));
-    geoStream(geographicLines, geoLineStream);
+  if (lineData) {
+    streamGeometry(projection, interruption, lineData, [
+      { sink: createLineSink(geoLineVertices) },
+    ]);
   }
 
   // 4. Tissot's Indicatrix Circles
@@ -137,15 +149,21 @@ export function tessellateGeoLayers({
       sphere() {},
     };
 
-    const tissotStream = projection.stream(tissotSink);
     const circleGen = geoCircle().radius(3.0);
-
+    const circles: GeoJSON.Polygon[] = [];
     for (let lon = -150; lon <= 150; lon += 30) {
       for (let lat = -60; lat <= 60; lat += 20) {
         circleGen.center([lon, lat]);
-        geoStream(circleGen(), tissotStream);
+        circles.push(circleGen());
       }
     }
+
+    streamGeometry(
+      projection,
+      interruption,
+      { type: "GeometryCollection", geometries: circles },
+      [{ sink: tissotSink }],
+    );
   }
 
   return {
@@ -160,18 +178,6 @@ export function tessellateGeoLayers({
 }
 
 // Helpers
-function emitLineSegments(ring: number[], close: boolean, out: number[]) {
-  for (let i = 0; i < ring.length - 2; i += 2) {
-    out.push(ring[i], ring[i + 1], ring[i + 2], ring[i + 3]);
-  }
-  if (close && ring.length >= 4) {
-    const len = ring.length;
-    if (ring[0] !== ring[len - 2] || ring[1] !== ring[len - 1]) {
-      out.push(ring[len - 2], ring[len - 1], ring[0], ring[1]);
-    }
-  }
-}
-
 function signedArea(ring: number[]): number {
   let a = 0;
   const n = ring.length;
