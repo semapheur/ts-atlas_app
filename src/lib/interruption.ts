@@ -127,11 +127,7 @@ function buildScheme(
         const west = lobe[0][0] + EPS;
         const east = lobe[2][0] - EPS;
         const pole = lobe[1][1];
-        // Clockwise seen from outside: the north goes up its west edge. The
-        // equator edge is nudged off the equator: with a rotation [λ, φ, 0]
-        // (all a drag can produce) the geographic equator always crosses the
-        // rotated equator at the cell corners, and clipping a line exactly
-        // through a corner is numerically degenerate.
+        // Clockwise seen from outside: the north goes up its west edge. The equator edge is nudged off the equator: with a rotation [λ, φ, 0] (all a drag can produce) the geographic equator always crosses the rotated equator at the cell corners, and clipping a line exactly through a corner is numerically degenerate.
         const eq = h === 0 ? EPS : -EPS;
         rings.push(
           densify(
@@ -253,10 +249,7 @@ function buildScheme(
     const phi0 = Number(q.parallel?.()) * RAD;
     if (!(phi0 > 0)) return null; // only the northern-parallel form is handled
     const tan0 = Math.tan(phi0);
-    // The shell edge. armadilloRaw accepts points down to 1e-3 rad below it;
-    // the clip ring stays ABOVE the true edge so that clipped vertices are
-    // never misclassified by floating-point error, and the curve is sampled
-    // finely because it is very steep near the antimeridian.
+    // The shell edge. armadilloRaw accepts points down to 1e-3 rad below it; the clip ring stays ABOVE the true edge so that clipped vertices are never misclassified by floating-point error, and the curve is sampled finely because it is very steep near the antimeridian.
     const shell = (lon: number) =>
       -Math.atan2(Math.cos((lon * RAD) / 2), tan0) * DEG;
     const MARGIN = 0.02;
@@ -309,14 +302,22 @@ function schemeFor(
   return schemeCache.get(p) ?? null;
 }
 
+/**
+ * The cells of a projection with cuts, as lon/lat rings in the rotated frame (the frame ProjectionScene draws its fixed surface in).
+ */
+export function cellOutlines(
+  projection: GeoProjection,
+  kind: InterruptionKind | undefined,
+): number[][][] {
+  return (kind && schemeFor(kind, projection)?.rings) || [];
+}
+
 function clipFor(s: CellScheme, cell: number): unknown {
   return (s.clips[cell] ??= geoClipPolygon({
     type: "Polygon",
     coordinates: [s.rings[cell]],
   }));
 }
-
-// ---------------------------------------------------------------------------
 
 type Geometry = GeoJSON.GeoJSON;
 
@@ -363,9 +364,7 @@ const asLines = (g: Geometry): Geometry =>
     : g;
 
 /**
- * Streams geometry through the projection into each target. Projections with
- * cuts (see InterruptionKind) are clipped per cell; everything else is streamed
- * directly.
+ * Streams geometry through the projection into each target. Projections with cuts (see InterruptionKind) are clipped per cell; everything else is streamed directly.
  */
 export function streamGeometry(
   projection: GeoProjection,
@@ -425,14 +424,10 @@ export function streamGeometry(
   }
 }
 
-// ---------------------------------------------------------------------------
-
 const stitchCache = new WeakMap<object, GeoJSON.FeatureCollection>();
 
 /**
- * Interrupted and HEALPix projections can only follow pole and antimeridian
- * edges once those edges are stitched with extra points. The data never
- * changes, so the result is cached.
+ * Interrupted and HEALPix projections can only follow pole and antimeridian edges once those edges are stitched with extra points. The data never changes, so the result is cached.
  */
 export function prepareGeometry(
   kind: InterruptionKind | undefined,

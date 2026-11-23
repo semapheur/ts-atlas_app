@@ -305,7 +305,11 @@
     const thetaMax = perspective
       ? Math.min(clipDeg, thetaForRadius(perspective, MAX_PLANE_R))
       : 0;
-    const R = perspective ? radiusAt(perspective, thetaMax) : 1.6;
+    const R = perspective
+      ? radiusAt(perspective, thetaMax)
+      : stretch !== 1
+        ? 1.1 // stretched sideways, so keep the half-width on screen
+        : 1.6;
     const disc = new THREE.Mesh(
       new THREE.CircleGeometry(R, 64),
       surfaceMaterial(),
@@ -350,7 +354,7 @@
     }
     surfaceGroup.add(plane, dot(new V3(0, 0, 1), 0.04, CONTACT));
 
-    if (!perspective) return stretch !== 1 ? 6.8 : 5.4; // not a perspective projection
+    if (!perspective) return stretch !== 1 ? 6.2 : 5.4; // not a perspective projection
 
     // Clip boundary on the sphere: a small circle at angle `clip` from the tangent point. It lives in the surface frame, like the plane.
     const c = clipDeg * DEG;
@@ -453,15 +457,29 @@
     return 4.6;
   }
 
-  /** Outlines of the regions a projection with cuts maps separately. */
+  /**
+   * Outlines of the regions a projection with cuts maps separately. WebGL
+   * lines are always 1px wide, so these are thin tubes in a dark violet that
+   * stands out against the pale globe and the orange / blue guides.
+   */
+  const CELL = 0x6d28d9;
+  const CELL_RADIUS = 0.018;
+  const CELL_MAX_POINTS = 160;
+
   function addCells(rings: number[][][]) {
     for (const ring of rings) {
+      // Rings are closed (last point repeats the first); thin out dense ones.
+      const open = ring.slice(0, -1);
+      const step = Math.max(1, Math.ceil(open.length / CELL_MAX_POINTS));
+      const pts = open
+        .filter((_, i) => i % step === 0)
+        .map(([lon, lat]) => lonLat(lon, lat).multiplyScalar(1.01));
+      if (pts.length < 3) continue;
+      const curve = new THREE.CatmullRomCurve3(pts, true, "centripetal");
       surfaceGroup.add(
-        polyline(
-          ring.map(([lon, lat]) => lonLat(lon, lat).multiplyScalar(1.004)),
-          RAY,
-          1,
-          true,
+        new THREE.Mesh(
+          new THREE.TubeGeometry(curve, pts.length * 2, CELL_RADIUS, 6, true),
+          new THREE.MeshBasicMaterial({ color: CELL }),
         ),
       );
     }

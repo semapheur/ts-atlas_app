@@ -1,6 +1,7 @@
 <script lang="ts">
   import AtlasMap from "./lib/components/AtlasMap.svelte";
   import ProjectionScene from "./lib/components/ProjectionScene.svelte";
+  import ProjectionTable from "./lib/components/ProjectionTable.svelte";
   import Select from "./lib/components/Select.svelte";
   import CheckBox from "./lib/components/CheckBox.svelte";
   import Slider from "./lib/components/Slider.svelte";
@@ -14,6 +15,7 @@
     type ParamValues,
     type ProjectionFamily,
   } from "./lib/projections";
+  import { cellOutlines } from "./lib/interruption";
   import countriesPoly from "./data/ne_110m_admin_0_countries.json";
   import geographicLine from "./data/ne_110m_geographic_lines.json";
   import type { MeasureMode, GeoData } from "./lib/types";
@@ -24,11 +26,7 @@
     geographicLines: geographicLine,
   };
 
-  const selectOptions = PROJECTION_LIST.map((p) => ({
-    value: p.id,
-    label: p.name,
-  }));
-
+  let projectionTable = $state<ReturnType<typeof ProjectionTable> | null>(null);
   let selectedKey = $state<ProjectionId>("orthographic");
   let rotation = $state<[number, number, number]>([0, 0, 0]);
   let showTissot = $state<boolean>(true);
@@ -48,6 +46,7 @@
     ...paramStore[selectedKey],
   });
   const projection = $derived(activeMeta.create(params));
+  const cells = $derived(cellOutlines(projection, activeMeta.interruption));
   const standardParallels = $derived(
     activeMeta.parallelsFor?.(params) ?? activeMeta.standardParallels,
   );
@@ -119,6 +118,9 @@
         label="Select projection"
         groups={selectGroups}
       />
+      <Button class="control-button" onclick={() => projectionTable?.open()}>
+        Browse all projections…
+      </Button>
     </section>
 
     <div class="control-group">
@@ -238,8 +240,16 @@
       clipAngle={params.clip}
       perspective={activeMeta.perspective}
       transverse={activeMeta.transverse}
+      {cells}
     />
   </section>
+  <ProjectionTable
+    bind:this={projectionTable}
+    projections={PROJECTION_LIST}
+    selectedId={selectedKey}
+    familyLabels={FAMILY_LABELS}
+    onselect={(id) => (selectedKey = id as ProjectionId)}
+  />
 </main>
 
 <style>
