@@ -42,5 +42,6 @@
     align-items: center;
     gap: 0.5rem;
     font-size: var(--text-sm);
+    accent-color: var(--color-ink);
   }
 </style>

@@ -342,5 +342,6 @@
   }
   .canvas-pane {
     position: relative;
+    height: 100%;
   }
 </style>
